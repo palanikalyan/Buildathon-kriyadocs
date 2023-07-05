@@ -1,52 +1,71 @@
 import re
 import requests
 import xml.etree.ElementTree as ET
+import tkinter as tk
+from tkinter import messagebox
 
-registry_api_url = "https://registry.api.identifiers.org/restApi/namespaces"
-response = requests.get(registry_api_url)
-namespace_data = response.json()
+def identify_accession_numbers(text):
+    """Identifies the accession numbers in the text and returns a list of them."""
+    accession_numbers = []
+    accession_number_patterns = [
+        re.compile(r"^[A-Za-z]\d{5}$"),
+        re.compile(r"^[A-Za-z]{2}\d{6}$"),
+        re.compile(r"^[A-Za-z]{3}\d{7}$"),
+    ]
+    for accession_number_pattern in accession_number_patterns:
+        matches = accession_number_pattern.finditer(text)
+        for match in matches:
+            accession_numbers.append(match.group(0))
+    return accession_numbers
 
-namespace_patterns = {ns["prefix"]: ns["pattern"] for ns in namespace_data}
+def get_namespace(accession_number):
+    """Gets the namespace for the accession number."""
+    url = "https://registry.api.identifiers.org/restApi/namespaces/" + accession_number
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        return data["prefix"]
+    else:
+        return None
 
-text = """
-The raw reads of the 30 ST22 S. aureus genomes sequenced in this study were deposited in GenBank under BioProject accession no. PRJNA929648.
+def get_url(accession_number, namespace):
+    """Gets the URL for the accession number."""
+    url = "https://resolver.api.identifiers.org/" + namespace + ":" + accession_number
+    response = requests.get(url)
+    if response.status_code == 200:
+        data = response.json()
+        return data["compactIdentifierResolvedURL"]
+    else:
+        return None
 
-The Kibdelosporangium philippinense ATCC 49844T whole genome shotgun sequence (WGS) project has been deposited at DDBJ/ENA/GenBank under accession JAJVCN000000000. The raw data from BioProject PRJNA790681 were submitted to the NCBI Sequence Read Archive (SRA) under three experiment accession numbers: SRX13551729 (Illumina fastq files), SRX13555714 (Nanopore reads in fastq format), and SRX13556647 (Nanopore reads in fast5 format).
+def generate_xml(accession_numbers):
+    """Generates the XML output for the accession numbers."""
+    root = ET.Element("accession_numbers")
+    for accession_number in accession_numbers:
+        element = ET.SubElement(root, "accession_number")
+        element.set("assigning_authority", get_namespace(accession_number))
+        url = get_url(accession_number, get_namespace(accession_number))
+        if url:
+            element.set("xlink:href", url)
+        text = ET.SubElement(element, "text")
+        text.text = accession_number
+    return root
 
-The complete genome sequences were deposited in National Center for Biotechnology Information (NCBI) under the accession number CP110363 (https://www.ncbi.nlm.nih.gov/nuccore/CP110363). The raw sequences obtained from Nanopore PromethION sequencer were deposited in the Sequence Read Archive under the BioProject PRJNA895949 (https://www.ncbi.nlm.nih.gov/bioproject/PRJNA895949). The raw sequences obtained from DNBSEQ-T7RS platform were deposited in the Sequence Read Archive under the BioProject PRJNA898672 (https://www.ncbi.nlm.nih.gov/bioproject/PRJNA898672).
-"""
+def process_text():
+    text = text_entry.get("1.0", tk.END)
+    accession_numbers = identify_accession_numbers(text)
+    xml = generate_xml(accession_numbers)
+    xml_str = ET.tostring(xml, encoding="utf-8").decode()
+    messagebox.showinfo("XML Output", xml_str)
 
-accession_numbers = re.findall(r'\b[A-Z]+\d+\b', text)
+window = tk.Tk()A
+window.title("Accession Number Identification")
+window.geometry("400x300")
 
-xml_tags = []
+text_entry = tk.Text(window, height=10, width=40)
+text_entry.pack(pady=10)
 
-for accession_number in accession_numbers:
-    namespace = None
-    compact_identifier = None
-    resolved_url = None
-    
-    for prefix, pattern in namespace_patterns.items():
-        if re.match(pattern, accession_number):
-            namespace = prefix
-            compact_identifier = f"{prefix}:{accession_number}"
-            break
-    
-    if namespace:
-        resolver_api_url = f"https://resolver.api.identifiers.org/{compact_identifier}"
-        response = requests.get(resolver_api_url)
-        resolved_data = response.json()
-        
-        if resolved_data["resolvedUrl"]:
-            resolved_url = resolved_data["resolvedUrl"]
-    
-    if resolved_url:
-        xml_tag = ET.Element("ext-link", {
-            "ext-link-type": "uri",
-            "assigning-authority": namespace,
-            "xlink:href": resolved_url
-        })
-        xml_tag.text = accession_number
-        xml_tags.append(xml_tag)
+process_button = tk.Button(window, text="Process Text", command=process_text)
+process_button.pack(pady=5)
 
-formatted_output = "\n".join([ET.tostring(tag).decode() for tag in xml_tags])
-print(formatted_output)
+window.mainloop()
